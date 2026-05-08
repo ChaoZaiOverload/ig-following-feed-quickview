@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Instagram Chronological Feed",
+  "version": "1.0.0",
+  "description": "Show only posts from people you follow, sorted newest first. No suggested content.",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["src/injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
