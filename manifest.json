@@ -1,15 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Instagram Chronological Feed",
-  "version": "1.0.0",
-  "description": "Show only posts from people you follow, sorted newest first. No suggested content.",
-  "permissions": [],
-  "content_scripts": [
-    {
-      "matches": ["https://www.instagram.com/*"],
-      "js": ["src/injected.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
-    }
-  ]
+  "name": "Instagram Following Feed Quickview",
+  "version": "1.2.0",
+  "description": "Chronological feed from people you follow, as a new tab page, in a grid view.",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["https://www.instagram.com/*"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Open Instagram Chronological Feed",
+    "default_icon": "icon128.png"
+  },
+  "icons": {
+    "128": "icon128.png"
+  },
+  "options_page": "options.html"
 }
