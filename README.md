@@ -2,7 +2,7 @@
 
 A Chrome extension that shows a fast, chronological grid of posts from the people you follow on Instagram — no algorithm, no suggested posts.
 
-![Feed screenshot](screenshots/web-store-compatible/quickview-screenshot.png)
+![Feed screenshot](screenshots/high-fidelity/all-following-view.png)
 
 ## Features
 
