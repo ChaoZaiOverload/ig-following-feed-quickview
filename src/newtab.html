@@ -27,20 +27,30 @@
         .user-chip img { width: 18px; height: 18px; border-radius: 50%; object-fit: cover; }
         #user-hint { font-size: 13px; color: #8e8e8e; padding: 4px 0; }
 
-        #feed { max-width: 960px; margin: 16px auto; padding: 0 16px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: start; }
+        #feed { max-width: 1400px; margin: 16px auto; padding: 0 16px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: start; }
+
+        /* All-following cards */
         .card { background: #fff; border: 1px solid #dbdbdb; border-radius: 4px; overflow: hidden; }
         .card-header { display: flex; align-items: center; padding: 6px 8px; gap: 6px; }
         .card-header img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
         .card-header a.username { font-weight: 600; font-size: 13px; color: #262626; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .card-header a.username:hover { text-decoration: underline; }
-        .time { margin-left: auto; color: #8e8e8e; font-size: 11px; white-space: nowrap; }
+        .time { color: #8e8e8e; font-size: 11px; white-space: nowrap; }
+        .card-header .time { margin-left: auto; }
         .card-img-wrap { position: relative; }
         .card-img { width: 100%; display: block; aspect-ratio: 1; object-fit: cover; }
         .carousel-badge { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.55); color: #fff; font-size: 10px; padding: 2px 5px; border-radius: 10px; pointer-events: none; }
-        .card-meta { display: flex; align-items: center; padding: 5px 8px; gap: 6px; border-top: 1px solid #f0f0f0; }
-        .card-meta a { font-size: 11px; color: #0095f6; text-decoration: none; margin-left: auto; }
-        .card-meta a:hover { text-decoration: underline; }
         .card-caption { padding: 6px 8px; font-size: 12px; color: #262626; white-space: pre-wrap; word-break: break-word; border-top: 1px solid #f5f5f5; }
+
+        /* Single-user post rows */
+        .card-post { grid-column: 1 / -1; padding: 6px 0 10px; border-bottom: 1px solid #efefef; }
+        .card-post .post-meta { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; }
+        .card-post .post-meta a { font-size: 11px; color: #0095f6; text-decoration: none; }
+        .card-post .post-meta a:hover { text-decoration: underline; }
+        .card-post .post-images { display: flex; flex-wrap: wrap; gap: 6px; }
+        .card-post .card-img-wrap { flex: 0 0 calc((100% - 24px) / 5); min-width: 0; border-radius: 3px; overflow: hidden; }
+        .card-post .card-caption { padding: 6px 0 0; border: none; font-size: 12px; color: #262626; white-space: pre-wrap; word-break: break-word; }
+
         #message { text-align: center; padding: 60px 20px; color: #8e8e8e; font-size: 14px; }
     </style>
 </head>

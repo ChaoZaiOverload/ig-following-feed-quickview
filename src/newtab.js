@@ -38,13 +38,13 @@ function getImageUrls(post) {
 }
 
 function buildCard(post, showUser) {
-    const urls = showUser ? [getImageUrl(post)].filter(Boolean) : getImageUrls(post);
-    if (!urls.length) return null;
-
-    const card = document.createElement('div');
-    card.className = 'card';
-
     if (showUser) {
+        const url = getImageUrl(post);
+        if (!url) return null;
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
         const header = document.createElement('div');
         header.className = 'card-header';
         header.innerHTML = `
@@ -53,54 +53,71 @@ function buildCard(post, showUser) {
             <span class="time">${timeAgo(post.taken_at)}</span>
         `;
         card.appendChild(header);
-    }
 
-    const imgBlock = document.createElement('a');
-    imgBlock.href = `https://instagram.com/p/${escape(post.code)}/`;
-    imgBlock.target = '_blank';
-    const multiRow = !showUser && urls.length > 1;
-    imgBlock.style.display = multiRow ? 'flex' : 'block';
-
-    urls.forEach((url, i) => {
         const wrap = document.createElement('div');
         wrap.className = 'card-img-wrap';
-        if (multiRow) {
-            wrap.style.cssText = `flex:1;min-width:0;${i > 0 ? 'border-left:2px solid #fafafa;' : ''}`;
-        }
         const imgEl = document.createElement('img');
         imgEl.className = 'card-img';
         imgEl.src = url;
         imgEl.loading = 'lazy';
         wrap.appendChild(imgEl);
-        imgBlock.appendChild(wrap);
-    });
+        if (post.media_type === 8 && post.carousel_media?.length > 1) {
+            const badge = document.createElement('span');
+            badge.className = 'carousel-badge';
+            badge.textContent = `⧉ ${post.carousel_media.length}`;
+            wrap.appendChild(badge);
+        }
+        const link = document.createElement('a');
+        link.href = `https://instagram.com/p/${escape(post.code)}/`;
+        link.target = '_blank';
+        link.style.display = 'block';
+        link.appendChild(wrap);
+        card.appendChild(link);
 
-    // Badge only in all-following mode (single-user shows all images instead)
-    if (showUser && post.media_type === 8 && post.carousel_media?.length > 1) {
-        const firstWrap = imgBlock.querySelector('.card-img-wrap');
-        const badge = document.createElement('span');
-        badge.className = 'carousel-badge';
-        badge.textContent = `⧉ ${post.carousel_media.length}`;
-        firstWrap.appendChild(badge);
-    }
+        if (post.caption?.text) {
+            const cap = document.createElement('div');
+            cap.className = 'card-caption';
+            cap.textContent = post.caption.text;
+            card.appendChild(cap);
+        }
+        return card;
+    } else {
+        // Single-user: full-width post row, each image takes one grid column
+        const urls = getImageUrls(post);
+        if (!urls.length) return null;
 
-    card.appendChild(imgBlock);
+        const card = document.createElement('div');
+        card.className = 'card-post';
 
-    if (!showUser) {
         const meta = document.createElement('div');
-        meta.className = 'card-meta';
-        meta.innerHTML = `<span class="time" style="margin-left:0">${timeAgo(post.taken_at)}</span><a href="https://instagram.com/p/${escape(post.code)}/" target="_blank">Open ↗</a>`;
+        meta.className = 'post-meta';
+        meta.innerHTML = `<span class="time">${timeAgo(post.taken_at)}</span><a href="https://instagram.com/p/${escape(post.code)}/" target="_blank">Open ↗</a>`;
         card.appendChild(meta);
-    }
 
-    if (post.caption?.text) {
-        const cap = document.createElement('div');
-        cap.className = 'card-caption';
-        cap.textContent = post.caption.text;
-        card.appendChild(cap);
-    }
+        const images = document.createElement('a');
+        images.className = 'post-images';
+        images.href = `https://instagram.com/p/${escape(post.code)}/`;
+        images.target = '_blank';
+        urls.forEach(url => {
+            const wrap = document.createElement('div');
+            wrap.className = 'card-img-wrap';
+            const imgEl = document.createElement('img');
+            imgEl.className = 'card-img';
+            imgEl.src = url;
+            imgEl.loading = 'lazy';
+            wrap.appendChild(imgEl);
+            images.appendChild(wrap);
+        });
+        card.appendChild(images);
 
-    return card;
+        if (post.caption?.text) {
+            const cap = document.createElement('div');
+            cap.className = 'card-caption';
+            cap.textContent = post.caption.text;
+            card.appendChild(cap);
+        }
+        return card;
+    }
 }
 
 function renderGrid(posts, showUser = true) {
