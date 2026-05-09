@@ -58,12 +58,15 @@ function buildCard(post, showUser) {
     const imgBlock = document.createElement('a');
     imgBlock.href = `https://instagram.com/p/${escape(post.code)}/`;
     imgBlock.target = '_blank';
-    imgBlock.style.display = 'block';
+    const multiRow = !showUser && urls.length > 1;
+    imgBlock.style.display = multiRow ? 'flex' : 'block';
 
     urls.forEach((url, i) => {
         const wrap = document.createElement('div');
         wrap.className = 'card-img-wrap';
-        if (i > 0) wrap.style.borderTop = '2px solid #fafafa';
+        if (multiRow) {
+            wrap.style.cssText = `flex:1;min-width:0;${i > 0 ? 'border-left:2px solid #fafafa;' : ''}`;
+        }
         const imgEl = document.createElement('img');
         imgEl.className = 'card-img';
         imgEl.src = url;
