@@ -26,9 +26,20 @@ function getImageUrl(post) {
     return c.find(x => x.width <= 640)?.url ?? c[0]?.url;
 }
 
+function getImageUrls(post) {
+    if (post.media_type === 8) {
+        return (post.carousel_media ?? []).map(m => {
+            const c = m.image_versions2?.candidates ?? [];
+            return c.find(x => x.width <= 640)?.url ?? c[0]?.url;
+        }).filter(Boolean);
+    }
+    const url = getImageUrl(post);
+    return url ? [url] : [];
+}
+
 function buildCard(post, showUser) {
-    const img = getImageUrl(post);
-    if (!img) return null;
+    const urls = showUser ? [getImageUrl(post)].filter(Boolean) : getImageUrls(post);
+    if (!urls.length) return null;
 
     const card = document.createElement('div');
     card.className = 'card';
@@ -44,25 +55,33 @@ function buildCard(post, showUser) {
         card.appendChild(header);
     }
 
-    const wrap = document.createElement('div');
-    wrap.className = 'card-img-wrap';
-    const imgEl = document.createElement('img');
-    imgEl.className = 'card-img';
-    imgEl.src = img;
-    imgEl.loading = 'lazy';
-    wrap.appendChild(imgEl);
-    if (post.media_type === 8 && post.carousel_media?.length > 1) {
+    const imgBlock = document.createElement('a');
+    imgBlock.href = `https://instagram.com/p/${escape(post.code)}/`;
+    imgBlock.target = '_blank';
+    imgBlock.style.display = 'block';
+
+    urls.forEach((url, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'card-img-wrap';
+        if (i > 0) wrap.style.borderTop = '2px solid #fafafa';
+        const imgEl = document.createElement('img');
+        imgEl.className = 'card-img';
+        imgEl.src = url;
+        imgEl.loading = 'lazy';
+        wrap.appendChild(imgEl);
+        imgBlock.appendChild(wrap);
+    });
+
+    // Badge only in all-following mode (single-user shows all images instead)
+    if (showUser && post.media_type === 8 && post.carousel_media?.length > 1) {
+        const firstWrap = imgBlock.querySelector('.card-img-wrap');
         const badge = document.createElement('span');
         badge.className = 'carousel-badge';
         badge.textContent = `⧉ ${post.carousel_media.length}`;
-        wrap.appendChild(badge);
+        firstWrap.appendChild(badge);
     }
-    const link = document.createElement('a');
-    link.href = `https://instagram.com/p/${escape(post.code)}/`;
-    link.target = '_blank';
-    link.style.display = 'block';
-    link.appendChild(wrap);
-    card.appendChild(link);
+
+    card.appendChild(imgBlock);
 
     if (!showUser) {
         const meta = document.createElement('div');
