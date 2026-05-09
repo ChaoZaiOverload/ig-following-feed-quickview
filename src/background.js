@@ -14,6 +14,8 @@ const CACHE_KEY = 'feedCache';
 const CACHE_TTL = 5 * 60 * 1000; // refresh if older than 5 minutes
 const FOLLOWING_CACHE_KEY = 'followingListCache';
 const FOLLOWING_CACHE_TTL = 15 * 60 * 1000;
+const USER_FEED_CACHE_KEY = 'userFeedCache';
+const USER_FEED_CACHE_TTL = 10 * 60 * 1000;
 
 async function igFetch(path) {
     const [csrfCookie, { appId }] = await Promise.all([
@@ -88,6 +90,31 @@ async function fetchUserFeed(userId) {
     return posts;
 }
 
+async function getUserFeed(userId) {
+    const { userFeedCache } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
+    const cached = userFeedCache?.[userId];
+    const isStale = !cached || (Date.now() - cached.cachedAt) > USER_FEED_CACHE_TTL;
+
+    if (isStale) {
+        fetchUserFeed(userId).then(async posts => {
+            const { userFeedCache: cur } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
+            await chrome.storage.local.set({
+                [USER_FEED_CACHE_KEY]: { ...(cur ?? {}), [userId]: { posts, cachedAt: Date.now() } },
+            });
+        }).catch(e => console.error(TAG, 'user feed refresh failed', e));
+    }
+
+    if (cached) return { posts: cached.posts, cachedAt: cached.cachedAt, fromCache: true };
+
+    const posts = await fetchUserFeed(userId);
+    const now = Date.now();
+    const { userFeedCache: cur } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
+    await chrome.storage.local.set({
+        [USER_FEED_CACHE_KEY]: { ...(cur ?? {}), [userId]: { posts, cachedAt: now } },
+    });
+    return { posts, cachedAt: now, fromCache: false };
+}
+
 async function fetchAndCache() {
     const selfId = await getSelfId();
     console.log(TAG, `👤 ${selfId}`);
@@ -146,8 +173,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return true;
     }
     if (message.type === 'FETCH_USER_FEED') {
-        fetchUserFeed(message.userId)
-            .then(posts => sendResponse({ ok: true, posts }))
+        getUserFeed(message.userId)
+            .then(data => sendResponse({ ok: true, ...data }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }

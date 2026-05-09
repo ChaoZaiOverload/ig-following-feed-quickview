@@ -217,6 +217,15 @@ function loadFollowingList() {
     });
 }
 
+function applyUserFeed(user, posts, cachedAt, fromCache) {
+    const cacheInfo = fromCache ? ` · cached ${cacheAgo(cachedAt)}` : '';
+    document.getElementById('status').textContent =
+        `${posts.length} posts · @${user.username}${cacheInfo}`;
+    const msg = document.getElementById('message');
+    if (msg) msg.remove();
+    renderGrid(posts, false);
+}
+
 function selectUser(user) {
     selectedUser = user;
     renderUserList();
@@ -228,11 +237,7 @@ function selectUser(user) {
                 ...p,
                 _user: { username: user.username, profile_pic_url: user.profile_pic_url },
             }));
-            document.getElementById('status').textContent =
-                `${posts.length} posts · @${user.username}`;
-            const msg = document.getElementById('message');
-            if (msg) msg.remove();
-            renderGrid(posts, false);
+            applyUserFeed(user, posts, response.cachedAt, response.fromCache);
         } else {
             document.getElementById('status').textContent =
                 `Error: ${response?.error ?? 'unknown'}`;
@@ -277,10 +282,21 @@ document.getElementById('refresh').addEventListener('click', () => {
     });
 });
 
-// Re-render when background finishes a fresh fetch (all-following mode only)
+// Re-render when background finishes a fresh fetch
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.feedCache?.newValue && mode === 'all') {
+    if (area !== 'local') return;
+    if (changes.feedCache?.newValue && mode === 'all') {
         renderAllFeed(changes.feedCache.newValue);
+    }
+    if (changes.userFeedCache?.newValue && mode === 'user' && selectedUser) {
+        const entry = changes.userFeedCache.newValue[selectedUser.pk];
+        if (entry) {
+            const posts = entry.posts.map(p => ({
+                ...p,
+                _user: { username: selectedUser.username, profile_pic_url: selectedUser.profile_pic_url },
+            }));
+            applyUserFeed(selectedUser, posts, entry.cachedAt, true);
+        }
     }
 });
 
