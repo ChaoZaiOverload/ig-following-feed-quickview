@@ -12,6 +12,8 @@ async function getSettings() {
 const BATCH_SIZE = 5;
 const CACHE_KEY = 'feedCache';
 const CACHE_TTL = 5 * 60 * 1000; // refresh if older than 5 minutes
+const FOLLOWING_CACHE_KEY = 'followingListCache';
+const FOLLOWING_CACHE_TTL = 15 * 60 * 1000;
 
 async function igFetch(path) {
     const [csrfCookie, { appId }] = await Promise.all([
@@ -59,6 +61,31 @@ async function getUserPosts(user) {
     } catch {
         return [];
     }
+}
+
+async function getCachedFollowing() {
+    const { followingListCache } = await chrome.storage.local.get(FOLLOWING_CACHE_KEY);
+    if (followingListCache && (Date.now() - followingListCache.cachedAt) < FOLLOWING_CACHE_TTL) {
+        return followingListCache.users;
+    }
+    const selfId = await getSelfId();
+    const users = await getFollowing(selfId);
+    users.sort((a, b) => a.username.localeCompare(b.username));
+    await chrome.storage.local.set({ [FOLLOWING_CACHE_KEY]: { users, cachedAt: Date.now() } });
+    return users;
+}
+
+async function fetchUserFeed(userId) {
+    const posts = [];
+    let cursor = null;
+    do {
+        const qs = cursor ? `?count=12&max_id=${cursor}` : '?count=12';
+        const d = await igFetch(`/api/v1/feed/user/${userId}/${qs}`);
+        posts.push(...(d.items ?? []));
+        cursor = d.next_max_id ?? null;
+        if (posts.length >= 60) break;
+    } while (cursor);
+    return posts;
 }
 
 async function fetchAndCache() {
@@ -109,6 +136,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         chrome.storage.local.remove(CACHE_KEY);
         fetchAndCache()
             .then(data => sendResponse({ ok: true, ...data }))
+            .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+    if (message.type === 'GET_FOLLOWING_LIST') {
+        getCachedFollowing()
+            .then(users => sendResponse({ ok: true, users }))
+            .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+    if (message.type === 'FETCH_USER_FEED') {
+        fetchUserFeed(message.userId)
+            .then(posts => sendResponse({ ok: true, posts }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
