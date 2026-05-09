@@ -1,3 +1,4 @@
 devtool-logs/
 logs/
 .DS_Store
+*.zip
