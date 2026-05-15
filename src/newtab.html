@@ -25,6 +25,10 @@
         .user-chip:hover { background: #f0f7ff; border-color: #0095f6; }
         .user-chip.selected { background: #0095f6; color: #fff; border-color: #0095f6; }
         .user-chip img { width: 18px; height: 18px; border-radius: 50%; object-fit: cover; }
+        .fav-btn { font-size: 11px; line-height: 1; background: none; border: none; padding: 0; cursor: pointer; color: #f0a500; opacity: 0; transition: opacity 0.1s; font-family: inherit; }
+        .user-chip:hover .fav-btn, .user-chip.favorited .fav-btn { opacity: 1; }
+        .user-chip.selected .fav-btn { color: #fff; }
+        .fav-divider { flex-basis: 100%; height: 1px; background: #efefef; margin: 2px 0; }
         #user-hint { font-size: 13px; color: #8e8e8e; padding: 4px 0; }
 
         #feed { max-width: 1400px; margin: 16px auto; padding: 0 16px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: start; }

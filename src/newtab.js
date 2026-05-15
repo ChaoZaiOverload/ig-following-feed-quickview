@@ -160,6 +160,56 @@ function loadAllFeed() {
     });
 }
 
+// --- Favorites ---
+
+const FAVORITES_KEY = 'favoriteUsers';
+let favoritePks = new Set();
+let favoriteUsers = []; // full user objects, persisted independently
+
+async function loadFavorites() {
+    return new Promise(resolve => {
+        chrome.storage.local.get(FAVORITES_KEY, ({ favoriteUsers: stored }) => {
+            favoriteUsers = stored ?? [];
+            favoritePks = new Set(favoriteUsers.map(u => u.pk));
+            resolve();
+        });
+    });
+}
+
+function saveFavorites() {
+    chrome.storage.local.set({ [FAVORITES_KEY]: favoriteUsers });
+}
+
+function toggleFavorite(user, event) {
+    event.stopPropagation();
+    if (favoritePks.has(user.pk)) {
+        favoritePks.delete(user.pk);
+        favoriteUsers = favoriteUsers.filter(u => u.pk !== user.pk);
+    } else {
+        favoritePks.add(user.pk);
+        favoriteUsers.push({ pk: user.pk, username: user.username, profile_pic_url: user.profile_pic_url });
+    }
+    saveFavorites();
+    renderUserList();
+}
+
+function makeChip(user) {
+    const isFav = favoritePks.has(user.pk);
+    const chip = document.createElement('button');
+    chip.className = 'user-chip' +
+        (selectedUser?.pk === user.pk ? ' selected' : '') +
+        (isFav ? ' favorited' : '');
+    chip.innerHTML = `<img src="${escape(user.profile_pic_url)}" /><span>${escape(user.username)}</span>`;
+    const star = document.createElement('button');
+    star.className = 'fav-btn';
+    star.title = isFav ? 'Unfavorite' : 'Favorite';
+    star.textContent = isFav ? '★' : '☆';
+    star.addEventListener('click', e => toggleFavorite(user, e));
+    chip.appendChild(star);
+    chip.addEventListener('click', () => selectUser(user));
+    return chip;
+}
+
 // --- One User mode ---
 
 let allFollowing = [];
@@ -168,26 +218,30 @@ let selectedUser = null;
 function renderUserList() {
     const list = document.getElementById('user-list');
     const query = document.getElementById('user-search').value.toLowerCase().trim();
-    const filtered = query
-        ? allFollowing.filter(u =>
-            u.username.toLowerCase().includes(query) ||
-            (u.full_name || '').toLowerCase().includes(query))
-        : allFollowing;
 
     list.innerHTML = '';
 
-    if (!filtered.length) {
+    // Favorites section — always shown at top, not filtered by search
+    if (favoriteUsers.length) {
+        favoriteUsers.forEach(user => list.appendChild(makeChip(user)));
+        const divider = document.createElement('div');
+        divider.className = 'fav-divider';
+        list.appendChild(divider);
+    }
+
+    const nonFavs = allFollowing.filter(u => !favoritePks.has(u.pk));
+    const filtered = query
+        ? nonFavs.filter(u =>
+            u.username.toLowerCase().includes(query) ||
+            (u.full_name || '').toLowerCase().includes(query))
+        : nonFavs;
+
+    if (!filtered.length && !favoriteUsers.length) {
         list.innerHTML = '<span id="user-hint">No matches</span>';
         return;
     }
 
-    filtered.slice(0, 40).forEach(user => {
-        const chip = document.createElement('button');
-        chip.className = 'user-chip' + (selectedUser?.pk === user.pk ? ' selected' : '');
-        chip.innerHTML = `<img src="${escape(user.profile_pic_url)}" /><span>${escape(user.username)}</span>`;
-        chip.addEventListener('click', () => selectUser(user));
-        list.appendChild(chip);
-    });
+    filtered.slice(0, 40).forEach(user => list.appendChild(makeChip(user)));
 
     if (filtered.length > 40) {
         const more = document.createElement('span');
@@ -206,14 +260,16 @@ function loadFollowingList() {
         return;
     }
     document.getElementById('user-list').innerHTML = '<span id="user-hint">Loading following list…</span>';
-    chrome.runtime.sendMessage({ type: 'GET_FOLLOWING_LIST' }, response => {
-        if (response?.ok) {
-            allFollowing = response.users;
-            renderUserList();
-        } else {
-            document.getElementById('user-list').innerHTML =
-                `<span id="user-hint">Error: ${response?.error ?? 'unknown'}</span>`;
-        }
+    loadFavorites().then(() => {
+        chrome.runtime.sendMessage({ type: 'GET_FOLLOWING_LIST' }, response => {
+            if (response?.ok) {
+                allFollowing = response.users;
+                renderUserList();
+            } else {
+                document.getElementById('user-list').innerHTML =
+                    `<span id="user-hint">Error: ${response?.error ?? 'unknown'}</span>`;
+            }
+        });
     });
 }
 
