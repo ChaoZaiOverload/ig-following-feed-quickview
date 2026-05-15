@@ -52,6 +52,28 @@ async function getFollowing(selfId) {
     return all;
 }
 
+function slimPost(post) {
+    function bestCandidate(candidates = []) {
+        const c = candidates.find(x => x.width <= 640) ?? candidates[0];
+        return c ? { width: c.width, url: c.url } : null;
+    }
+    return {
+        pk: post.pk,
+        id: post.id,
+        code: post.code,
+        media_type: post.media_type,
+        taken_at: post.taken_at,
+        caption: post.caption?.text ? { text: post.caption.text } : undefined,
+        image_versions2: post.image_versions2
+            ? { candidates: [bestCandidate(post.image_versions2.candidates)].filter(Boolean) }
+            : undefined,
+        carousel_media: post.carousel_media?.map(m => ({
+            image_versions2: { candidates: [bestCandidate(m.image_versions2?.candidates)].filter(Boolean) },
+        })),
+        _user: post._user,
+    };
+}
+
 async function getUserPosts(user) {
     try {
         const d = await igFetch(`/api/v1/feed/user/${user.pk}/`);
@@ -59,7 +81,7 @@ async function getUserPosts(user) {
         const cutoff = Date.now() - maxAgeMs;
         return (d.items ?? [])
             .filter(p => p.taken_at * 1000 > cutoff)
-            .map(p => ({ ...p, _user: { username: user.username, profile_pic_url: user.profile_pic_url } }));
+            .map(p => slimPost({ ...p, _user: { username: user.username, profile_pic_url: user.profile_pic_url } }));
     } catch {
         return [];
     }
@@ -77,6 +99,8 @@ async function getCachedFollowing() {
     return users;
 }
 
+const USER_FEED_CACHE_MAX_USERS = 20;
+
 async function fetchUserFeed(userId) {
     const posts = [];
     let cursor = null;
@@ -87,7 +111,19 @@ async function fetchUserFeed(userId) {
         cursor = d.next_max_id ?? null;
         if (posts.length >= 60) break;
     } while (cursor);
-    return posts;
+    return posts.map(p => slimPost(p));
+}
+
+function evictUserFeedCache(cache, updatedUserId) {
+    const entries = Object.entries(cache);
+    if (entries.length <= USER_FEED_CACHE_MAX_USERS) return cache;
+    // Evict oldest entries, but always keep the one we just wrote
+    entries.sort((a, b) => a[1].cachedAt - b[1].cachedAt);
+    const evicted = new Set(
+        entries.slice(0, entries.length - USER_FEED_CACHE_MAX_USERS).map(([id]) => id)
+    );
+    evicted.delete(updatedUserId);
+    return Object.fromEntries(entries.filter(([id]) => !evicted.has(id)));
 }
 
 async function getUserFeed(userId) {
@@ -98,8 +134,9 @@ async function getUserFeed(userId) {
     if (isStale) {
         fetchUserFeed(userId).then(async posts => {
             const { userFeedCache: cur } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
+            const updated = { ...(cur ?? {}), [userId]: { posts, cachedAt: Date.now() } };
             await chrome.storage.local.set({
-                [USER_FEED_CACHE_KEY]: { ...(cur ?? {}), [userId]: { posts, cachedAt: Date.now() } },
+                [USER_FEED_CACHE_KEY]: evictUserFeedCache(updated, userId),
             });
         }).catch(e => console.error(TAG, 'user feed refresh failed', e));
     }
@@ -109,8 +146,9 @@ async function getUserFeed(userId) {
     const posts = await fetchUserFeed(userId);
     const now = Date.now();
     const { userFeedCache: cur } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
+    const updated = { ...(cur ?? {}), [userId]: { posts, cachedAt: now } };
     await chrome.storage.local.set({
-        [USER_FEED_CACHE_KEY]: { ...(cur ?? {}), [userId]: { posts, cachedAt: now } },
+        [USER_FEED_CACHE_KEY]: evictUserFeedCache(updated, userId),
     });
     return { posts, cachedAt: now, fromCache: false };
 }
