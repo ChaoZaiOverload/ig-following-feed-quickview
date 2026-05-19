@@ -150,6 +150,7 @@ function loadAllFeed() {
     const msg = document.getElementById('message');
     if (msg) msg.textContent = 'Fetching posts from people you follow...';
     chrome.runtime.sendMessage({ type: 'FETCH_FEED' }, response => {
+        if (mode !== 'all') return;
         const msgEl = document.getElementById('message');
         if (response?.ok) {
             if (msgEl) msgEl.remove();
@@ -288,6 +289,7 @@ function selectUser(user) {
     document.getElementById('status').textContent = `Loading @${user.username}…`;
     document.getElementById('feed').innerHTML = '';
     chrome.runtime.sendMessage({ type: 'FETCH_USER_FEED', userId: user.pk }, response => {
+        if (mode !== 'user' || selectedUser?.pk !== user.pk) return;
         if (response?.ok) {
             const posts = response.posts.map(p => ({
                 ...p,
@@ -313,10 +315,10 @@ function switchMode(newMode) {
     document.getElementById('refresh').style.display = mode === 'all' ? '' : 'none';
     document.getElementById('user-picker').style.display = mode === 'user' ? 'block' : 'none';
 
+    document.getElementById('feed').innerHTML = '';
     if (mode === 'all') {
         loadAllFeed();
     } else {
-        document.getElementById('feed').innerHTML = '';
         document.getElementById('status').textContent = selectedUser
             ? `@${selectedUser.username}`
             : 'Select a user above';
@@ -334,7 +336,7 @@ document.getElementById('refresh').addEventListener('click', () => {
     setRefreshing(true);
     chrome.runtime.sendMessage({ type: 'FORCE_REFRESH' }, response => {
         setRefreshing(false);
-        if (response?.ok) renderAllFeed(response);
+        if (response?.ok && mode === 'all') renderAllFeed(response);
     });
 });
 
