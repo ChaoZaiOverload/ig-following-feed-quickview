@@ -9,6 +9,11 @@
         #header { padding: 12px 20px; background: #fff; border-bottom: 1px solid #dbdbdb; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
         #header h1 { font-size: 15px; font-weight: 600; flex-shrink: 0; }
         #status { font-size: 13px; color: #8e8e8e; margin-left: auto; white-space: nowrap; }
+        #progress { display: flex; align-items: center; gap: 7px; min-width: 235px; }
+        #progress[hidden] { display: none; }
+        #progress-label { width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8e8e8e; font-size: 11px; text-align: right; }
+        #progress-track { width: 82px; height: 5px; overflow: hidden; border-radius: 3px; background: #efefef; }
+        #progress-bar { width: 0; height: 100%; border-radius: inherit; background: #0095f6; transition: width 0.18s ease; }
         #refresh { padding: 5px 12px; font-size: 13px; background: none; border: 1px solid #dbdbdb; border-radius: 6px; cursor: pointer; color: #262626; flex-shrink: 0; }
         #refresh:hover { background: #fafafa; }
         #refresh:disabled { color: #8e8e8e; cursor: default; }
@@ -66,6 +71,10 @@
             <button class="mode-tab" id="tab-user">One User</button>
         </div>
         <span id="status"></span>
+        <div id="progress" role="progressbar" aria-label="Loading feed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <span id="progress-label">0% · Estimating…</span>
+            <div id="progress-track"><div id="progress-bar"></div></div>
+        </div>
         <button id="refresh">↻ Refresh</button>
     </div>
     <div id="user-picker">

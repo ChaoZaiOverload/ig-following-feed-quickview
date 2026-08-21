@@ -17,6 +17,69 @@ function cacheAgo(cachedAt) {
     return `${Math.floor(s / 3600)}h ago`;
 }
 
+let activeProgress = null;
+
+function formatEta(milliseconds) {
+    const seconds = Math.max(1, Math.ceil(milliseconds / 1000));
+    if (seconds < 60) return `${seconds}s left`;
+    const minutes = Math.ceil(seconds / 60);
+    return `${minutes}m left`;
+}
+
+function renderProgress() {
+    if (!activeProgress) return;
+    const progress = document.getElementById('progress');
+    const { percent, label, etaDeadline } = activeProgress;
+    const etaMs = etaDeadline == null ? null : Math.max(0, etaDeadline - Date.now());
+    const etaText = percent >= 100
+        ? 'Ready'
+        : etaMs == null
+            ? 'Estimating…'
+            : formatEta(etaMs);
+
+    progress.hidden = false;
+    progress.title = label;
+    progress.setAttribute('aria-valuenow', String(percent));
+    progress.setAttribute('aria-valuetext', `${percent}% — ${label} — ${etaText}`);
+    document.getElementById('progress-label').textContent = `${percent}% · ${etaText}`;
+    document.getElementById('progress-bar').style.width = `${percent}%`;
+}
+
+function progressMatches(scope, userId) {
+    return activeProgress?.scope === scope &&
+        (scope !== 'user' || activeProgress.userId === String(userId));
+}
+
+function updateProgress(scope, percent, label, userId = null, etaMs = null) {
+    if (!progressMatches(scope, userId)) return;
+    const value = Math.max(0, Math.min(100, Math.round(percent)));
+    activeProgress.percent = value;
+    activeProgress.label = label;
+    activeProgress.etaDeadline = Number.isFinite(etaMs) && etaMs > 0
+        ? Date.now() + etaMs
+        : etaMs === 0 ? Date.now() : null;
+    renderProgress();
+}
+
+function startProgress(scope, userId = null, label = 'Starting') {
+    activeProgress = {
+        scope,
+        userId: userId == null ? null : String(userId),
+        percent: 0,
+        label,
+        etaDeadline: null,
+    };
+    updateProgress(scope, 0, label, userId);
+}
+
+function clearProgress(scope = null, userId = null) {
+    if (scope && !progressMatches(scope, userId)) return;
+    activeProgress = null;
+    document.getElementById('progress').hidden = true;
+}
+
+setInterval(renderProgress, 1000);
+
 function candidateUrls(media) {
     return (media?.image_versions2?.candidates ?? [])
         .map(candidate => candidate.url)
@@ -174,6 +237,7 @@ function renderGrid(posts, showUser = true) {
 // --- All Following mode ---
 
 function renderAllFeed({ posts, followingCount, cachedAt }) {
+    clearProgress('all');
     const msg = document.getElementById('message');
     if (msg) msg.remove();
     document.getElementById('status').textContent =
@@ -188,6 +252,7 @@ function setRefreshing(on) {
 }
 
 function loadAllFeed() {
+    startProgress('all', null, 'Loading feed');
     document.getElementById('status').textContent = 'Loading…';
     const msg = document.getElementById('message');
     if (msg) msg.textContent = 'Fetching posts from people you follow...';
@@ -198,6 +263,7 @@ function loadAllFeed() {
             if (msgEl) msgEl.remove();
             renderAllFeed(response);
         } else {
+            clearProgress('all');
             if (msgEl) msgEl.textContent = `Error: ${response?.error ?? 'unknown error'}`;
         }
     });
@@ -318,6 +384,7 @@ function loadFollowingList() {
 }
 
 function applyUserFeed(user, posts, cachedAt, fromCache) {
+    clearProgress('user', user.pk);
     const cacheInfo = fromCache ? ` · cached ${cacheAgo(cachedAt)}` : '';
     document.getElementById('status').textContent =
         `${posts.length} posts · @${user.username}${cacheInfo}`;
@@ -328,6 +395,7 @@ function applyUserFeed(user, posts, cachedAt, fromCache) {
 
 function selectUser(user) {
     selectedUser = user;
+    startProgress('user', user.pk, `Loading @${user.username}`);
     renderUserList();
     document.getElementById('status').textContent = `Loading @${user.username}…`;
     document.getElementById('feed').innerHTML = '';
@@ -340,6 +408,7 @@ function selectUser(user) {
             }));
             applyUserFeed(user, posts, response.cachedAt, response.fromCache);
         } else {
+            clearProgress('user', user.pk);
             document.getElementById('status').textContent =
                 `Error: ${response?.error ?? 'unknown'}`;
         }
@@ -353,6 +422,7 @@ let mode = 'all';
 function switchMode(newMode) {
     if (newMode === mode) return;
     mode = newMode;
+    clearProgress();
     document.getElementById('tab-all').classList.toggle('active', mode === 'all');
     document.getElementById('tab-user').classList.toggle('active', mode === 'user');
     document.getElementById('refresh').style.display = mode === 'all' ? '' : 'none';
@@ -377,10 +447,20 @@ document.getElementById('user-search').addEventListener('input', renderUserList)
 
 document.getElementById('refresh').addEventListener('click', () => {
     setRefreshing(true);
+    startProgress('all', null, 'Refreshing feed');
     chrome.runtime.sendMessage({ type: 'FORCE_REFRESH' }, response => {
         setRefreshing(false);
-        if (response?.ok && mode === 'all') renderAllFeed(response);
+        if (response?.ok && mode === 'all') {
+            renderAllFeed(response);
+        } else {
+            clearProgress('all');
+        }
     });
+});
+
+chrome.runtime.onMessage.addListener(message => {
+    if (message.type !== 'FETCH_PROGRESS') return;
+    updateProgress(message.scope, message.percent, message.label, message.userId, message.etaMs);
 });
 
 // Re-render when background finishes a fresh fetch

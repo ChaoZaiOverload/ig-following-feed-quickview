@@ -19,6 +19,15 @@ const USER_FEED_CACHE_KEY = 'userFeedCache';
 const USER_FEED_CACHE_TTL = 10 * 60 * 1000;
 const avatarCache = new Map();
 
+function sendFetchProgress(scope, percent, details = {}) {
+    chrome.runtime.sendMessage({
+        type: 'FETCH_PROGRESS',
+        scope,
+        percent: Math.max(0, Math.min(100, Math.round(percent))),
+        ...details,
+    }, () => void chrome.runtime.lastError);
+}
+
 function isAllowedAvatarUrl(rawUrl) {
     try {
         const { protocol, hostname } = new URL(rawUrl);
@@ -86,14 +95,17 @@ async function getSelfId() {
     return cookie.value;
 }
 
-async function getFollowing(selfId) {
+async function getFollowing(selfId, onPage = null) {
     const all = [];
     let cursor = null;
+    let page = 0;
     do {
         const qs = cursor ? `?count=50&max_id=${cursor}` : '?count=50';
         const d = await igFetch(`/api/v1/friendships/${selfId}/following/${qs}`);
         all.push(...(d.users ?? []));
         cursor = d.next_max_id ?? null;
+        page += 1;
+        onPage?.({ loaded: all.length, hasMore: Boolean(cursor), page });
     } while (cursor);
     return all;
 }
@@ -169,17 +181,41 @@ async function getCachedFollowing() {
 
 const USER_FEED_CACHE_MAX_USERS = 20;
 
-async function fetchUserFeed(userId) {
+async function fetchUserFeed(userId, reportProgress = false) {
     const posts = [];
     let cursor = null;
+    let completedPages = 0;
+    const startedAt = Date.now();
+    if (reportProgress) {
+        sendFetchProgress('user', 5, { userId: String(userId), label: 'Connecting to Instagram' });
+    }
     do {
         const qs = cursor ? `?count=12&max_id=${cursor}` : '?count=12';
         const d = await igFetch(`/api/v1/feed/user/${userId}/${qs}`);
         posts.push(...(d.items ?? []));
         cursor = d.next_max_id ?? null;
+        completedPages += 1;
+        if (reportProgress) {
+            const percent = cursor && posts.length < 60
+                ? 10 + (Math.min(posts.length, 60) / 60) * 80
+                : 95;
+            const remainingPages = cursor
+                ? Math.max(1, Math.ceil((60 - Math.min(posts.length, 60)) / 12))
+                : 0;
+            const averagePageMs = (Date.now() - startedAt) / completedPages;
+            sendFetchProgress('user', percent, {
+                userId: String(userId),
+                label: `Fetched ${posts.length} posts`,
+                etaMs: remainingPages ? averagePageMs * remainingPages : 0,
+            });
+        }
         if (posts.length >= 60) break;
     } while (cursor);
-    return posts.map(p => slimPost(p));
+    const slimmed = posts.map(p => slimPost(p));
+    if (reportProgress) {
+        sendFetchProgress('user', 100, { userId: String(userId), label: 'Ready' });
+    }
+    return slimmed;
 }
 
 function evictUserFeedCache(cache, updatedUserId) {
@@ -194,10 +230,10 @@ function evictUserFeedCache(cache, updatedUserId) {
     return Object.fromEntries(entries.filter(([id]) => !evicted.has(id)));
 }
 
-async function getUserFeed(userId) {
+async function getUserFeed(userId, reportProgress = false) {
     const { userFeedCache } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
     const cached = userFeedCache?.[userId];
-    const isStale = !cached || (Date.now() - cached.cachedAt) > USER_FEED_CACHE_TTL;
+    const isStale = cached && (Date.now() - cached.cachedAt) > USER_FEED_CACHE_TTL;
 
     if (isStale) {
         fetchUserFeed(userId).then(async posts => {
@@ -211,7 +247,7 @@ async function getUserFeed(userId) {
 
     if (cached) return { posts: cached.posts, cachedAt: cached.cachedAt, fromCache: true };
 
-    const posts = await fetchUserFeed(userId);
+    const posts = await fetchUserFeed(userId, reportProgress);
     const now = Date.now();
     const { userFeedCache: cur } = await chrome.storage.local.get(USER_FEED_CACHE_KEY);
     const updated = { ...(cur ?? {}), [userId]: { posts, cachedAt: now } };
@@ -221,20 +257,42 @@ async function getUserFeed(userId) {
     return { posts, cachedAt: now, fromCache: false };
 }
 
-async function fetchAndCache() {
+async function fetchAndCache(reportProgress = false) {
+    if (reportProgress) sendFetchProgress('all', 2, { label: 'Connecting to Instagram' });
     const selfId = await getSelfId();
     console.log(TAG, `👤 ${selfId}`);
 
-    const following = await getFollowing(selfId);
+    if (reportProgress) sendFetchProgress('all', 5, { label: 'Loading following list' });
+    const following = await getFollowing(selfId, reportProgress
+        ? ({ loaded, hasMore, page }) => {
+            sendFetchProgress('all', hasMore ? Math.min(9, 5 + page) : 10, {
+                label: hasMore ? `Found ${loaded} accounts so far` : `Found ${loaded} accounts`,
+            });
+        }
+        : null);
     console.log(TAG, `👥 ${following.length} following`);
 
     const posts = [];
+    const accountFetchStartedAt = Date.now();
     for (let i = 0; i < following.length; i += BATCH_SIZE) {
         const batch = following.slice(i, i + BATCH_SIZE);
         const results = await Promise.all(batch.map(getUserPosts));
         results.forEach(r => posts.push(...r));
+        if (reportProgress) {
+            const completed = Math.min(i + batch.length, following.length);
+            const percent = 10 + (completed / following.length) * 85;
+            const elapsedMs = Date.now() - accountFetchStartedAt;
+            const etaMs = completed < following.length
+                ? (elapsedMs / completed) * (following.length - completed)
+                : 0;
+            sendFetchProgress('all', percent, {
+                label: `Loaded ${completed} of ${following.length} accounts`,
+                etaMs,
+            });
+        }
     }
 
+    if (reportProgress) sendFetchProgress('all', 98, { label: 'Preparing feed' });
     posts.sort((a, b) => b.taken_at - a.taken_at);
     const data = {
         version: CACHE_VERSION,
@@ -244,13 +302,14 @@ async function fetchAndCache() {
     };
     await chrome.storage.local.set({ [CACHE_KEY]: data });
     console.log(TAG, `💾 cached ${posts.length} posts`);
+    if (reportProgress) sendFetchProgress('all', 100, { label: 'Ready' });
     return data;
 }
 
-async function getFeed() {
+async function getFeed(reportProgress = false) {
     const { feedCache } = await chrome.storage.local.get(CACHE_KEY);
     if (!feedCache || feedCache.version !== CACHE_VERSION) {
-        return fetchAndCache();
+        return fetchAndCache(reportProgress);
     }
 
     const isStale = (Date.now() - feedCache.cachedAt) > CACHE_TTL;
@@ -268,14 +327,14 @@ chrome.action.onClicked.addListener(() => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'FETCH_FEED') {
-        getFeed()
+        getFeed(true)
             .then(data => sendResponse({ ok: true, ...data }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
     if (message.type === 'FORCE_REFRESH') {
         chrome.storage.local.remove(CACHE_KEY);
-        fetchAndCache()
+        fetchAndCache(true)
             .then(data => sendResponse({ ok: true, ...data }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
@@ -287,7 +346,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return true;
     }
     if (message.type === 'FETCH_USER_FEED') {
-        getUserFeed(message.userId)
+        getUserFeed(message.userId, true)
             .then(data => sendResponse({ ok: true, ...data }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
