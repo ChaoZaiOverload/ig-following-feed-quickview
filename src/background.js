@@ -11,11 +11,57 @@ async function getSettings() {
 }
 const BATCH_SIZE = 5;
 const CACHE_KEY = 'feedCache';
+const CACHE_VERSION = 3;
 const CACHE_TTL = 5 * 60 * 1000; // refresh if older than 5 minutes
 const FOLLOWING_CACHE_KEY = 'followingListCache';
 const FOLLOWING_CACHE_TTL = 15 * 60 * 1000;
 const USER_FEED_CACHE_KEY = 'userFeedCache';
 const USER_FEED_CACHE_TTL = 10 * 60 * 1000;
+const avatarCache = new Map();
+
+function isAllowedAvatarUrl(rawUrl) {
+    try {
+        const { protocol, hostname } = new URL(rawUrl);
+        return protocol === 'https:' && [
+            'cdninstagram.com',
+            'fbcdn.net',
+        ].some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+    } catch {
+        return false;
+    }
+}
+
+async function fetchAvatar(url) {
+    if (!isAllowedAvatarUrl(url)) throw new Error('Unsupported avatar host');
+    if (avatarCache.has(url)) return avatarCache.get(url);
+
+    const pending = (async () => {
+        const response = await fetch(url, {
+            credentials: 'include',
+            referrerPolicy: 'no-referrer',
+            cache: 'force-cache',
+        });
+        if (!response.ok) throw new Error(`Avatar request failed: ${response.status}`);
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!contentType.startsWith('image/')) throw new Error('Avatar response is not an image');
+
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.byteLength > 2 * 1024 * 1024) throw new Error('Avatar image is too large');
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return `data:${contentType};base64,${btoa(binary)}`;
+    })();
+
+    avatarCache.set(url, pending);
+    try {
+        return await pending;
+    } catch (error) {
+        avatarCache.delete(url);
+        throw error;
+    }
+}
 
 async function igFetch(path) {
     const [csrfCookie, { appId }] = await Promise.all([
@@ -53,10 +99,27 @@ async function getFollowing(selfId) {
 }
 
 function slimPost(post) {
-    function bestCandidate(candidates = []) {
-        const c = candidates.find(x => x.width <= 640) ?? candidates[0];
-        return c ? { width: c.width, url: c.url } : null;
+    function compactCandidates(candidates = []) {
+        const valid = candidates.filter(candidate => candidate?.url);
+        const preferred = valid.find(candidate => candidate.width <= 640) ?? valid[0];
+        if (!preferred) return [];
+
+        const alternatives = valid
+            .filter(candidate => candidate.url !== preferred.url)
+            .sort((a, b) => Math.abs((a.width ?? 640) - 640) - Math.abs((b.width ?? 640) - 640));
+        return [preferred, alternatives[0], valid[0], ...alternatives]
+            .filter((candidate, index, ordered) =>
+                candidate && ordered.findIndex(item => item?.url === candidate.url) === index)
+            .slice(0, 3)
+            .map(candidate => ({ width: candidate.width, url: candidate.url }));
     }
+    const author = post.user ?? post._user;
+    const profilePicUrl = post.user?.profile_pic_url
+        ?? post.user?.hd_profile_pic_url_info?.url
+        ?? post.user?.profile_pic_url_hd
+        ?? post._user?.profile_pic_url
+        ?? post._user?.hd_profile_pic_url_info?.url
+        ?? post._user?.profile_pic_url_hd;
     return {
         pk: post.pk,
         id: post.id,
@@ -65,12 +128,15 @@ function slimPost(post) {
         taken_at: post.taken_at,
         caption: post.caption?.text ? { text: post.caption.text } : undefined,
         image_versions2: post.image_versions2
-            ? { candidates: [bestCandidate(post.image_versions2.candidates)].filter(Boolean) }
+            ? { candidates: compactCandidates(post.image_versions2.candidates) }
             : undefined,
         carousel_media: post.carousel_media?.map(m => ({
-            image_versions2: { candidates: [bestCandidate(m.image_versions2?.candidates)].filter(Boolean) },
+            image_versions2: { candidates: compactCandidates(m.image_versions2?.candidates) },
         })),
-        _user: post._user,
+        _user: author ? {
+            username: post.user?.username ?? post._user?.username,
+            profile_pic_url: profilePicUrl,
+        } : undefined,
     };
 }
 
@@ -81,7 +147,9 @@ async function getUserPosts(user) {
         const cutoff = Date.now() - maxAgeMs;
         return (d.items ?? [])
             .filter(p => p.taken_at * 1000 > cutoff)
-            .map(p => slimPost({ ...p, _user: { username: user.username, profile_pic_url: user.profile_pic_url } }));
+            // The post response contains a fresher author image than the
+            // friendships response, which can return a placeholder URL.
+            .map(p => slimPost({ ...p, _user: user }));
     } catch {
         return [];
     }
@@ -168,7 +236,12 @@ async function fetchAndCache() {
     }
 
     posts.sort((a, b) => b.taken_at - a.taken_at);
-    const data = { posts, followingCount: following.length, cachedAt: Date.now() };
+    const data = {
+        version: CACHE_VERSION,
+        posts,
+        followingCount: following.length,
+        cachedAt: Date.now(),
+    };
     await chrome.storage.local.set({ [CACHE_KEY]: data });
     console.log(TAG, `💾 cached ${posts.length} posts`);
     return data;
@@ -176,14 +249,17 @@ async function fetchAndCache() {
 
 async function getFeed() {
     const { feedCache } = await chrome.storage.local.get(CACHE_KEY);
-    const isStale = !feedCache || (Date.now() - feedCache.cachedAt) > CACHE_TTL;
+    if (!feedCache || feedCache.version !== CACHE_VERSION) {
+        return fetchAndCache();
+    }
+
+    const isStale = (Date.now() - feedCache.cachedAt) > CACHE_TTL;
 
     if (isStale) {
         fetchAndCache(); // refresh in background — don't await
     }
 
-    // Return cache immediately if available, otherwise wait for fresh fetch
-    return feedCache ?? await fetchAndCache();
+    return feedCache;
 }
 
 chrome.action.onClicked.addListener(() => {
@@ -213,6 +289,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'FETCH_USER_FEED') {
         getUserFeed(message.userId)
             .then(data => sendResponse({ ok: true, ...data }))
+            .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+    if (message.type === 'FETCH_AVATAR') {
+        fetchAvatar(message.url)
+            .then(dataUrl => sendResponse({ ok: true, dataUrl }))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }

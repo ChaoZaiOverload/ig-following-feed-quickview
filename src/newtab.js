@@ -17,30 +17,71 @@ function cacheAgo(cachedAt) {
     return `${Math.floor(s / 3600)}h ago`;
 }
 
-function getImageUrl(post) {
-    if (post.media_type === 8) {
-        const c = post.carousel_media?.[0]?.image_versions2?.candidates ?? [];
-        return c.find(x => x.width <= 640)?.url ?? c[0]?.url;
-    }
-    const c = post.image_versions2?.candidates ?? [];
-    return c.find(x => x.width <= 640)?.url ?? c[0]?.url;
+function candidateUrls(media) {
+    return (media?.image_versions2?.candidates ?? [])
+        .map(candidate => candidate.url)
+        .filter(Boolean);
 }
 
-function getImageUrls(post) {
+function getImageCandidates(post) {
     if (post.media_type === 8) {
-        return (post.carousel_media ?? []).map(m => {
-            const c = m.image_versions2?.candidates ?? [];
-            return c.find(x => x.width <= 640)?.url ?? c[0]?.url;
-        }).filter(Boolean);
+        return candidateUrls(post.carousel_media?.[0]);
     }
-    const url = getImageUrl(post);
-    return url ? [url] : [];
+    return candidateUrls(post);
+}
+
+function getImageCandidateLists(post) {
+    if (post.media_type === 8) {
+        return (post.carousel_media ?? [])
+            .map(candidateUrls)
+            .filter(candidates => candidates.length);
+    }
+    const candidates = getImageCandidates(post);
+    return candidates.length ? [candidates] : [];
+}
+
+function loadPostImage(img, candidates) {
+    let candidateIndex = 0;
+    img.addEventListener('error', () => {
+        candidateIndex += 1;
+        if (candidateIndex < candidates.length) {
+            img.src = candidates[candidateIndex];
+        } else {
+            img.hidden = true;
+        }
+    });
+    img.src = candidates[candidateIndex];
+}
+
+function loadAvatar(img, url) {
+    if (!url) {
+        img.hidden = true;
+        return;
+    }
+
+    img.referrerPolicy = 'no-referrer';
+    let triedBackgroundLoad = false;
+    img.addEventListener('error', () => {
+        if (triedBackgroundLoad) {
+            img.hidden = true;
+            return;
+        }
+        triedBackgroundLoad = true;
+        chrome.runtime.sendMessage({ type: 'FETCH_AVATAR', url }, response => {
+            if (response?.ok) {
+                img.src = response.dataUrl;
+            } else {
+                img.hidden = true;
+            }
+        });
+    });
+    img.src = url;
 }
 
 function buildCard(post, showUser) {
     if (showUser) {
-        const url = getImageUrl(post);
-        if (!url) return null;
+        const candidates = getImageCandidates(post);
+        if (!candidates.length) return null;
 
         const card = document.createElement('div');
         card.className = 'card';
@@ -48,18 +89,19 @@ function buildCard(post, showUser) {
         const header = document.createElement('div');
         header.className = 'card-header';
         header.innerHTML = `
-            <img src="${escape(post._user.profile_pic_url)}" />
+            <img alt="" />
             <a class="username" href="https://instagram.com/${escape(post._user.username)}/" target="_blank">${escape(post._user.username)}</a>
             <span class="time">${timeAgo(post.taken_at)}</span>
         `;
+        loadAvatar(header.querySelector('img'), post._user.profile_pic_url);
         card.appendChild(header);
 
         const wrap = document.createElement('div');
         wrap.className = 'card-img-wrap';
         const imgEl = document.createElement('img');
         imgEl.className = 'card-img';
-        imgEl.src = url;
         imgEl.loading = 'lazy';
+        loadPostImage(imgEl, candidates);
         wrap.appendChild(imgEl);
         if (post.media_type === 8 && post.carousel_media?.length > 1) {
             const badge = document.createElement('span');
@@ -83,8 +125,8 @@ function buildCard(post, showUser) {
         return card;
     } else {
         // Single-user: full-width post row, each image takes one grid column
-        const urls = getImageUrls(post);
-        if (!urls.length) return null;
+        const candidateLists = getImageCandidateLists(post);
+        if (!candidateLists.length) return null;
 
         const card = document.createElement('div');
         card.className = 'card-post';
@@ -98,13 +140,13 @@ function buildCard(post, showUser) {
         images.className = 'post-images';
         images.href = `https://instagram.com/p/${escape(post.code)}/`;
         images.target = '_blank';
-        urls.forEach(url => {
+        candidateLists.forEach(candidates => {
             const wrap = document.createElement('div');
             wrap.className = 'card-img-wrap';
             const imgEl = document.createElement('img');
             imgEl.className = 'card-img';
-            imgEl.src = url;
             imgEl.loading = 'lazy';
+            loadPostImage(imgEl, candidates);
             wrap.appendChild(imgEl);
             images.appendChild(wrap);
         });
@@ -200,7 +242,8 @@ function makeChip(user) {
     chip.className = 'user-chip' +
         (selectedUser?.pk === user.pk ? ' selected' : '') +
         (isFav ? ' favorited' : '');
-    chip.innerHTML = `<img src="${escape(user.profile_pic_url)}" /><span>${escape(user.username)}</span>`;
+    chip.innerHTML = `<img alt="" /><span>${escape(user.username)}</span>`;
+    loadAvatar(chip.querySelector('img'), user.profile_pic_url);
     const star = document.createElement('button');
     star.className = 'fav-btn';
     star.title = isFav ? 'Unfavorite' : 'Favorite';
