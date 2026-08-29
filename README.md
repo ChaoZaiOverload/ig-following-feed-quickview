@@ -2,6 +2,10 @@
 
 A Chrome extension that shows a fast, chronological grid of posts from the people you follow on Instagram — no algorithm, no suggested posts.
 
+## Account safety warning
+
+Using this extension may unintentionally trigger Facebook's detection of high risk in the account and cause it to request an email or password reset. Use it with caution.
+
 ![Feed screenshot](screenshots/high-fidelity/all-following-view.png)
 
 ## Features
