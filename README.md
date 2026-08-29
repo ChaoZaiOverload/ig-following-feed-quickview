@@ -27,7 +27,7 @@ You must be logged in to Instagram in the same Chrome profile.
 
 ## How it works
 
-The background service worker reads your Instagram session cookies (`ds_user_id`, `csrftoken`) and calls Instagram's private mobile API to fetch posts from the accounts you follow. Everything stays local — no data is sent anywhere except back to Instagram's own servers.
+The background service worker reads the Instagram session cookies needed to authenticate requests and calls Instagram's API to fetch posts from the accounts you follow. Everything stays local — no data is sent anywhere except back to Instagram's own servers.
 
 See [PRIVACY.md](PRIVACY.md) for the full privacy policy.
 

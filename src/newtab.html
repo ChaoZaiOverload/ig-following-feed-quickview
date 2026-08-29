@@ -61,9 +61,26 @@
         .card-post .card-caption { padding: 6px 0 0; border: none; font-size: 12px; color: #262626; white-space: pre-wrap; word-break: break-word; }
 
         #message { text-align: center; padding: 60px 20px; color: #8e8e8e; font-size: 14px; }
+
+        #risk-alert { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.55); }
+        #risk-alert[hidden] { display: none; }
+        .risk-alert-card { width: 100%; max-width: 460px; padding: 24px; border-radius: 12px; background: #fff; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24); }
+        .risk-alert-card h2 { margin-bottom: 12px; font-size: 18px; color: #262626; }
+        .risk-alert-card p { color: #4a4a4a; font-size: 14px; line-height: 1.5; }
+        #acknowledge-risk { display: block; width: 100%; margin-top: 20px; padding: 9px 16px; border: 0; border-radius: 8px; background: #0095f6; color: #fff; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; }
+        #acknowledge-risk:hover { background: #1877f2; }
+        #acknowledge-risk:focus-visible { outline: 3px solid rgba(0, 149, 246, 0.35); outline-offset: 2px; }
+        #acknowledge-risk:disabled { opacity: 0.65; cursor: default; }
     </style>
 </head>
 <body>
+    <div id="risk-alert" role="alertdialog" aria-modal="true" aria-labelledby="risk-alert-title" aria-describedby="risk-alert-message" hidden>
+        <div class="risk-alert-card">
+            <h2 id="risk-alert-title">Account safety warning</h2>
+            <p id="risk-alert-message">Using this extension may unintentionally trigger Facebook's detection of high risk in the account and cause it to request an email or password reset. Use it with caution.</p>
+            <button id="acknowledge-risk" type="button">Note the risk</button>
+        </div>
+    </div>
     <div id="header">
         <h1>Instagram Feed</h1>
         <div id="mode-tabs">

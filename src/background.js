@@ -1,6 +1,17 @@
 const TAG = '[IG-BG]';
 const DEFAULT_APP_ID = '936619743392459';
 const DEFAULT_MAX_AGE_HOURS = 48;
+const FOLLOWING_QUERY_HASH = '58712303d941c6855d4e888c5f0cd22f';
+const INSTAGRAM_AUTH_RULE_ID = 1;
+const INSTAGRAM_AUTH_COOKIE_NAMES = [
+    'sessionid',
+    'csrftoken',
+    'ds_user_id',
+    'mid',
+    'ig_did',
+    'rur',
+];
+let instagramAuthState = { expiresAt: 0, csrfToken: '', pending: null };
 
 async function getSettings() {
     const { appId, maxAgeHours } = await chrome.storage.local.get(['appId', 'maxAgeHours']);
@@ -72,16 +83,75 @@ async function fetchAvatar(url) {
     }
 }
 
+async function refreshInstagramAuthRule() {
+    if (instagramAuthState.expiresAt > Date.now()) {
+        return instagramAuthState.csrfToken;
+    }
+    if (instagramAuthState.pending) return instagramAuthState.pending;
+
+    instagramAuthState.pending = (async () => {
+        const cookies = (await Promise.all(INSTAGRAM_AUTH_COOKIE_NAMES.map(name =>
+            chrome.cookies.get({ url: 'https://www.instagram.com/', name })
+        ))).filter(Boolean);
+        const sessionCookie = cookies.find(cookie => cookie.name === 'sessionid');
+        if (!sessionCookie?.value) {
+            await chrome.declarativeNetRequest.updateSessionRules({
+                removeRuleIds: [INSTAGRAM_AUTH_RULE_ID],
+            });
+            throw new Error('Not logged in to Instagram');
+        }
+
+        const cookieHeader = cookies
+            .map(cookie => `${cookie.name}=${cookie.value}`)
+            .join('; ');
+        await chrome.declarativeNetRequest.updateSessionRules({
+            removeRuleIds: [INSTAGRAM_AUTH_RULE_ID],
+            addRules: [{
+                id: INSTAGRAM_AUTH_RULE_ID,
+                priority: 1,
+                action: {
+                    type: 'modifyHeaders',
+                    requestHeaders: [
+                        { header: 'Cookie', operation: 'set', value: cookieHeader },
+                        { header: 'Referer', operation: 'set', value: 'https://www.instagram.com/' },
+                    ],
+                },
+                condition: {
+                    regexFilter: '^https://www\\.instagram\\.com/(api/v1/|graphql/query/)',
+                    resourceTypes: ['xmlhttprequest'],
+                    // Only extension service-worker requests have no tab.
+                    tabIds: [chrome.tabs.TAB_ID_NONE],
+                },
+            }],
+        });
+
+        const csrfToken = cookies.find(cookie => cookie.name === 'csrftoken')?.value ?? '';
+        instagramAuthState = {
+            expiresAt: Date.now() + 60 * 1000,
+            csrfToken,
+            pending: null,
+        };
+        return csrfToken;
+    })();
+
+    try {
+        return await instagramAuthState.pending;
+    } catch (error) {
+        instagramAuthState = { expiresAt: 0, csrfToken: '', pending: null };
+        throw error;
+    }
+}
+
 async function igFetch(path) {
-    const [csrfCookie, { appId }] = await Promise.all([
-        chrome.cookies.get({ url: 'https://www.instagram.com', name: 'csrftoken' }),
+    const [csrfToken, { appId }] = await Promise.all([
+        refreshInstagramAuthRule(),
         getSettings(),
     ]);
     const r = await fetch(`https://www.instagram.com${path}`, {
         credentials: 'include',
         headers: {
             'X-IG-App-ID': appId,
-            'X-CSRFToken': csrfCookie?.value ?? '',
+            'X-CSRFToken': csrfToken,
             'X-Requested-With': 'XMLHttpRequest',
         }
     });
@@ -95,19 +165,78 @@ async function getSelfId() {
     return cookie.value;
 }
 
-async function getFollowing(selfId, onPage = null) {
+function normalizeFollowingUser(user) {
+    return {
+        ...user,
+        pk: String(user.pk ?? user.id),
+    };
+}
+
+async function getFollowingGraphql(selfId, onPage = null) {
     const all = [];
     let cursor = null;
     let page = 0;
     do {
-        const qs = cursor ? `?count=50&max_id=${cursor}` : '?count=50';
-        const d = await igFetch(`/api/v1/friendships/${selfId}/following/${qs}`);
-        all.push(...(d.users ?? []));
+        const variables = {
+            id: String(selfId),
+            include_reel: true,
+            fetch_mutual: false,
+            first: 50,
+        };
+        if (cursor) variables.after = cursor;
+
+        const path = `/graphql/query/?query_hash=${FOLLOWING_QUERY_HASH}` +
+            `&variables=${encodeURIComponent(JSON.stringify(variables))}`;
+        const d = await igFetch(path);
+        const connection = d.data?.user?.edge_follow;
+        if (!connection) throw new Error('Unexpected following-list response');
+
+        all.push(...(connection.edges ?? []).map(edge => normalizeFollowingUser(edge.node)));
+        cursor = connection.page_info?.has_next_page
+            ? connection.page_info.end_cursor
+            : null;
+        page += 1;
+        onPage?.({ loaded: all.length, hasMore: Boolean(cursor), page });
+    } while (cursor);
+    return all;
+}
+
+async function getFollowingRest(selfId, onPage = null) {
+    const all = [];
+    let cursor = null;
+    let page = 0;
+    const rankToken = `${selfId}_${crypto.randomUUID().toUpperCase()}`;
+    do {
+        const params = new URLSearchParams({
+            count: '50',
+            rank_token: rankToken,
+            search_surface: 'follow_list_page',
+            query: '',
+            enable_groups: 'true',
+        });
+        if (cursor) params.set('max_id', cursor);
+        const d = await igFetch(`/api/v1/friendships/${selfId}/following/?${params}`);
+        all.push(...(d.users ?? []).map(normalizeFollowingUser));
         cursor = d.next_max_id ?? null;
         page += 1;
         onPage?.({ loaded: all.length, hasMore: Boolean(cursor), page });
     } while (cursor);
     return all;
+}
+
+async function getFollowing(selfId, onPage = null) {
+    try {
+        return await getFollowingGraphql(selfId, onPage);
+    } catch (graphqlError) {
+        console.warn(TAG, 'web following-list request failed; trying REST fallback', graphqlError);
+        try {
+            return await getFollowingRest(selfId, onPage);
+        } catch (restError) {
+            throw new Error(
+                `Unable to load following list: ${graphqlError.message}; fallback: ${restError.message}`
+            );
+        }
+    }
 }
 
 function slimPost(post) {

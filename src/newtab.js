@@ -2,6 +2,38 @@ function escape(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+const RISK_ACKNOWLEDGED_KEY = 'riskAcknowledged';
+let appStarted = false;
+
+function startApp() {
+    if (appStarted) return;
+    appStarted = true;
+    loadAllFeed();
+}
+
+function initializeRiskAlert() {
+    const alert = document.getElementById('risk-alert');
+    const acknowledgeButton = document.getElementById('acknowledge-risk');
+
+    chrome.storage.local.get(RISK_ACKNOWLEDGED_KEY, result => {
+        if (result[RISK_ACKNOWLEDGED_KEY] === true) {
+            startApp();
+            return;
+        }
+
+        alert.hidden = false;
+        acknowledgeButton.focus();
+    });
+
+    acknowledgeButton.addEventListener('click', () => {
+        acknowledgeButton.disabled = true;
+        chrome.storage.local.set({ [RISK_ACKNOWLEDGED_KEY]: true }, () => {
+            alert.hidden = true;
+            startApp();
+        });
+    });
+}
+
 function timeAgo(taken_at) {
     const s = Math.floor(Date.now() / 1000 - taken_at);
     if (s < 60) return `${s}s`;
@@ -466,6 +498,10 @@ chrome.runtime.onMessage.addListener(message => {
 // Re-render when background finishes a fresh fetch
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if (changes[RISK_ACKNOWLEDGED_KEY]?.newValue === true) {
+        document.getElementById('risk-alert').hidden = true;
+        startApp();
+    }
     if (changes.feedCache?.newValue && mode === 'all') {
         renderAllFeed(changes.feedCache.newValue);
     }
@@ -481,5 +517,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 
-// Initial load
-loadAllFeed();
+// Initial load is gated by the one-time account safety acknowledgment.
+initializeRiskAlert();
